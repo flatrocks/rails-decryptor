@@ -1,0 +1,29 @@
+[project]
+name = "railsdecryptor"
+version = "0.0.0"
+description = "Decrypt encrypted Rails text fields"
+readme = "README.md"
+authors = [
+    {name = "Tom Wilson", email = "tom@rollnorocks.com"},
+]
+requires-python = ">=3.6"
+license = {file = "LICENSE"}
+urls = {repository = "https://github.com/.../rails-decryptor"}
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent"
+]
+dependencies = [
+    "pycryptodome"
+]
+
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[options.packages.find]
+where = "src"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["test"]
