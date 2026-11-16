@@ -3,6 +3,7 @@ Rails ActiveRecord Encryption field decryption utility.
 Supports Rails 7.0 (SHA-1) and Rails 7.1+ (SHA-256) encryption methods.
 """
 import json
+import zlib
 from collections import namedtuple
 from base64 import b64decode
 from Crypto.Cipher import AES
@@ -18,15 +19,9 @@ class RailsDecryptor:
     Decrypts encrypted Rails data fields.
 
     Supports both Rails 7.0 (SHA-1 based PBKDF2) and Rails 7.1+ (SHA-256 based PBKDF2).
-    Does not support compression. See README.md for details.
+    Supports zlib compression used by Rails.
     """
     EncryptedObject = namedtuple("RailsEncryptedField", ["ciphertext", "nonce", "tag", "compressed"])
-
-    class CompressionNotSupportedError(Exception):
-        """Indicates that unsupported data compression was encountered"""
-        def __init__(self, message):
-            self.message = message
-            super().__init__(self.message)
 
     def __init__(self, password, salt):
         """
@@ -44,24 +39,26 @@ class RailsDecryptor:
         Decrypt a Rails encrypted field.
 
         Tries Rails 7.1+ (SHA-256) first, then falls back to Rails 7.0 (SHA-1) if needed.
+        Automatically decompresses data if zlib compression was used.
         """
         encrypted_object = self._encrypted_object(raw_text_field)
-
-        if not encrypted_object.compressed is False:
-            raise RailsDecryptor.CompressionNotSupportedError(
-                "Compressed data detected, but compression is not supported by RailsDecryptor"
-            )
 
         # Try 7.1+ (SHA-256) first
         try:
             key = self._derive_key(self.password, self.salt, hash_algorithm="SHA256")
             cipher = AES.new(key, AES.MODE_GCM, encrypted_object.nonce)
-            return cipher.decrypt_and_verify(encrypted_object.ciphertext, encrypted_object.tag).decode()
+            plaintext = cipher.decrypt_and_verify(encrypted_object.ciphertext, encrypted_object.tag)
         except ValueError:
             # Fallback to 7.0 (SHA-1)
             key = self._derive_key(self.password, self.salt, hash_algorithm="SHA1")
             cipher = AES.new(key, AES.MODE_GCM, encrypted_object.nonce)
-            return cipher.decrypt_and_verify(encrypted_object.ciphertext, encrypted_object.tag).decode()
+            plaintext = cipher.decrypt_and_verify(encrypted_object.ciphertext, encrypted_object.tag)
+
+        # Decompress if needed
+        if encrypted_object.compressed:
+            plaintext = zlib.decompress(plaintext)
+
+        return plaintext.decode()
 
     def _derive_key(self, password, salt, hash_algorithm="SHA256"):
         """

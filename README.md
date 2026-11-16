@@ -8,6 +8,7 @@ Python module to decrypt Rails 7+ encrypted fields using non-deterministic encry
 
 - ✅ **Dual Version Support**: Automatically detects and decrypts both Rails 7.0 (SHA-1) and Rails 7.1+ (SHA-256) encrypted fields
 - ✅ **Zero Configuration**: No need to specify which Rails version encrypted the data - it just works
+- ✅ **Compression Support**: Automatically decompresses zlib-compressed encrypted fields
 - ✅ **Fast Fallback**: Tries Rails 7.1+ first, falls back to Rails 7.0 if needed
 - ✅ **Comprehensive Testing**: Fully tested with real Rails 8.1 generated encryption
 - ✅ **Production Ready**: Used in production environments
@@ -28,14 +29,19 @@ from railsdecryptor import RailsDecryptor
 # Create decryptor (works for both Rails 7.0 and 7.1+)
 decryptor = RailsDecryptor(ar_primary_key, ar_salt)
 
-# Decrypt any Rails encrypted field
+# Decrypt any Rails encrypted field (compressed or not)
 plaintext = decryptor.decrypt(encrypted_field_json)
 ```
 
 ### In Your Rails Model
 
+You can now use compression without any special handling:
+
 ```ruby
-# Define the encrypted field with compression disabled
+# Compression is automatically handled!
+encrypts :password, encryptor: ActiveRecord::Encryption::Encryptor.new(compress: true)
+
+# Or disable compression if you prefer:
 encrypts :password, encryptor: ActiveRecord::Encryption::Encryptor.new(compress: false)
 ```
 
@@ -44,7 +50,7 @@ Then access it from Python:
 ```python
 from railsdecryptor import RailsDecryptor
 
-# Same code works for Rails 7.0 and 7.1+
+# Same code works for both compressed and uncompressed data!
 decryptor = RailsDecryptor(
     your_ar_primary_key,
     your_ar_salt
@@ -70,15 +76,16 @@ When you call `decrypt()`:
 
 1. **First**: Tries SHA-256 based PBKDF2 key derivation (Rails 7.1+)
 2. **If that fails**: Automatically falls back to SHA-1 (Rails 7.0)
-3. **Returns**: Decrypted message if either method succeeds
-4. **If both fail**: Raises `ValueError`
+3. **Then**: If the data has the compression flag set (`"c": true`), decompresses with zlib
+4. **Returns**: Decrypted message if either method succeeds
+5. **If both fail**: Raises `ValueError`
 
-This means you don't need to know which Rails version encrypted the data—the decryptor figures it out automatically.
+This means you don't need to know which Rails version encrypted the data or whether it was compressed—the decryptor figures it out automatically.
 
 ```python
-# Same code works for both Rails versions!
+# Same code works for all combinations!
 decryptor = RailsDecryptor(key, salt)
-result = decryptor.decrypt(encrypted_field)  # Works for 7.0 or 7.1+
+result = decryptor.decrypt(encrypted_field)  # Works for 7.0 or 7.1+, compressed or not
 ```
 
 ### Why No Version Parameter?
@@ -99,28 +106,21 @@ decryptor = RailsDecryptor(key, salt)  # Auto-detects!
 
 The new approach is simpler and handles mixed encryption versions transparently.
 
-## Important: Compression Support
+## Compression Support
 
-⚠️ **This module does NOT support compression.**
+✅ **Compression is now fully supported!**
 
-Rails compresses long encrypted messages by default. When defining encrypted fields, **always disable compression**:
+Rails can compress encrypted messages to save storage space. The `rails-decryptor` automatically detects and decompresses the data:
 
 ```ruby
-# ✓ CORRECT - Compression disabled
-encrypts :password, encryptor: ActiveRecord::Encryption::Encryptor.new(compress: false)
+# ✓ Works great - compression is handled automatically!
+encrypts :sensitive_data, encryptor: ActiveRecord::Encryption::Encryptor.new(compress: true)
 
-# ✗ WRONG - Will fail
-encrypts :password  # Uses default compression!
+# ✓ Also works - no compression needed
+encrypts :sensitive_data, encryptor: ActiveRecord::Encryption::Encryptor.new(compress: false)
 ```
 
-If you try to decrypt a compressed message, you'll get:
-
-```
-railsdecryptor.RailsDecryptor.CompressionNotSupportedError: 
-  Compressed data detected, but compression is not supported by RailsDecryptor
-```
-
-You can tell if a message is compressed by checking the JSON structure:
+The compressed/uncompressed status is stored in the JSON header:
 
 ```json
 {
@@ -128,9 +128,16 @@ You can tell if a message is compressed by checking the JSON structure:
   "h": {
     "iv": "...",
     "at": "...",
-    "c": true      ← This flag means compressed
+    "c": true      ← This flag indicates compression
   }
 }
+```
+
+You don't need to do anything special—just decrypt as normal:
+
+```python
+decryptor = RailsDecryptor(key, salt)
+result = decryptor.decrypt(encrypted_field_json)  # Handles compression automatically
 ```
 
 ## Testing
@@ -140,7 +147,7 @@ The module includes comprehensive tests covering:
 - ✓ Rails 7.0 decryption (SHA-1 based PBKDF2)
 - ✓ Rails 7.1+ decryption (SHA-256 based PBKDF2)
 - ✓ Auto-detection fallback mechanism
-- ✓ Compression error handling
+- ✓ Compression/decompression
 
 Run tests:
 
@@ -166,11 +173,12 @@ Simply remove the `rails_version` parameter. The decryptor will automatically de
 
 ## Performance Considerations
 
-- **Rails 7.1+ data**: 1 key derivation + 1 AES decryption
-- **Rails 7.0 data**: 2 key derivations + 2 AES attempts (the fallback)
+- **Rails 7.1+ data**: 1 key derivation + 1 AES decryption (+ optional decompression)
+- **Rails 7.0 data**: 2 key derivations + 2 AES attempts (the fallback, + optional decompression)
 
 Performance impact is minimal:
 - PBKDF2 with 2^16 iterations is fast (~10ms on modern hardware)
+- zlib decompression is very fast
 - Fallback only occurs for Rails 7.0 messages
 - Typical usage patterns cache the decryptor instance
 
@@ -183,15 +191,13 @@ Both decryption attempts failed. This means:
 - Data is corrupted
 - Data was encrypted with an unsupported method
 
-### CompressionNotSupportedError
+### Decompression Error
 
-The encrypted field has compression enabled. Disable it in your Rails model:
+The encrypted field has compression enabled but decompression failed. This typically means:
+- The encrypted data is corrupted
+- The key or salt is wrong
 
-```ruby
-encrypts :your_field, encryptor: ActiveRecord::Encryption::Encryptor.new(compress: false)
-```
-
-Then re-encrypt the data.
+If you're getting consistent decompression errors, check that your Rails encryption keys are correct.
 
 ### Performance is slow
 
@@ -241,6 +247,17 @@ except ValueError:
 
 This is safe because AES-GCM MAC verification only succeeds with the correct key.
 
+### Compression (zlib)
+
+If the compression flag (`"c": true`) is present in the encrypted field header, the plaintext is decompressed using Python's standard `zlib` module:
+
+```python
+if compressed:
+    plaintext = zlib.decompress(plaintext)
+```
+
+This matches Rails' compression/decompression behavior exactly.
+
 ## Related Testing Documentation
 
 For detailed information about generating test fixtures, see [GENERATE_TEST_DATA.md](GENERATE_TEST_DATA.md).
@@ -248,3 +265,4 @@ For detailed information about generating test fixtures, see [GENERATE_TEST_DATA
 ## License
 
 See [LICENSE](LICENSE) file for details.
+

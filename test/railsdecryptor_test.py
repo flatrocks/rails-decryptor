@@ -42,13 +42,13 @@ def rails_7_1_examples():
 
 @pytest.fixture
 def compressed_examples():
-    """Example encrypted fields with compression flag (should raise error)"""
+    """Example encrypted fields with zlib compression enabled"""
     return [
         {
-            'ar_key': b"Q3TJUKuOUGSZmgqaD2WZ72pQdg5Rikfn",
-            'ar_salt': b"9REysw2kZuLybtKjtJsIZHg8cTd2DyMT",
-            'encrypted_field': '{"p":"iNB7ZNRrtgwg59ckr5h5sAz2BA==","h":{"iv":"d+P5BhM8o5u5lSvF","at":"mtaOcoICzpwZIuT+1J90bQ==", "c": true}}',
-            'clear_text': 'the secret password'
+            'ar_key': b"32-byte-test-key-pad-to-exact-32",
+            'ar_salt': b"test-salt-16-bit",
+            'encrypted_field': '{"p":"rzxHGmx693xlN6tQjy3AiMiwcyhPHcGuaaGI6Vbr6moisDg9rWIqbSbxTeCts/mmtBR+smspUCW4v1j7HHN7xG/sAoB3To3E/Q6XJB4NIrSptA==","h":{"iv":"4+k1h7gM9wd5sMSr","at":"vhU4NazdoVJdjnzFVat64w==","c":true}}',
+            'clear_text': 'ThisIsASensitivePasswordThatShouldBeCompressedAndWillBeUsedForTestingCompressionSupport'
         }
     ]
 
@@ -80,9 +80,10 @@ def test_auto_detection_fallback(rails_7_0_examples):
         assert result == example['clear_text']
 
 
-def test_compressed_decryption_raises_error(compressed_examples):
-    """Test that compressed data raises CompressionNotSupportedError"""
-    with pytest.raises(RailsDecryptor.CompressionNotSupportedError):
-        for example in compressed_examples:
-            decryptor = RailsDecryptor(example['ar_key'], example['ar_salt'])
-            decryptor.decrypt(example['encrypted_field'])
+def test_compressed_decryption(compressed_examples):
+    """Test that compressed data is automatically decompressed during decryption"""
+    for example in compressed_examples:
+        decryptor = RailsDecryptor(example['ar_key'], example['ar_salt'])
+        result = decryptor.decrypt(example['encrypted_field'])
+        assert result == example['clear_text']
+
